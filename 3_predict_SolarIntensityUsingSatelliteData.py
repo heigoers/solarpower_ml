@@ -1,11 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Notebook to correlate different channels in satellite images and measured sun intensity from weather stations
-
-# In[1]:
-
-
+# # Notebook to predict the solar intensity using pretrained models and features extracted from satellite images
 #### Functions to load data
 
 from keras.preprocessing import image
@@ -21,13 +17,26 @@ from tensorflow import keras
 from PIL import Image
 #from matplotlib.patches import Circle
 from datetime import date
+from datetime import timedelta
+import copy
+from tensorflow import keras
+import tensorflow as tf
+from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.svm import SVR
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn import linear_model
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures
+import numpy as np
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import train_test_split
+
 
 
 # ## Locations of weather stations
-
-# In[2]:
-
-
 weather_station_coordinates = dict()
 weather_station_coordinates["Tallinn-Harku"] = [59.398055, 24.602778]
 weather_station_coordinates["Narva"] = [59.389444, 28.109167]
@@ -39,12 +48,6 @@ weather_station_coordinates["Vilsandi"] = [58.382778, 21.814167]
 
 
 # ## Load satellite images
-
-# In[3]:
-
-
-
-
 """
 Function for loading the satellite images
 Arguments:
@@ -91,27 +94,7 @@ def loadSatelliteImages(selectedDatasets=["2019-07"], pictureTypes=["dnc", "dnm"
     return pictures, dates
 
 
-# In[4]:
-
-
-###### Some important variables
- 
-npixel = 128 # Define the pixel size of images
-pictureType = ["dnc", "dnm"]
-dataSets = ["2019-06","2019-07","2019-08","2019-09","2019-10"]
-
-
-# In[5]:
-
-
-sat, labels = loadSatelliteImages(selectedDatasets=dataSets, pictureTypes=pictureType, pictureSize=(npixel, npixel))
-
-
-# ## Relate points in satellite image to weather station coordinates
-
-# In[6]:
-
-
+# Function to relate points in satellite image to weather station coordinates
 def findPixel(latsMatrix, lonsMatrix, coordLat, coordLon):
     #Iterate over lattitude and longitude matrix to find coord
     accuracyDif = 0.07
@@ -125,10 +108,7 @@ def findPixel(latsMatrix, lonsMatrix, coordLat, coordLon):
     #Nothing was found return
     return (None, None)
 
-
-# In[7]:
-
-
+# Function to resize the transformation matrix, if the size of picture has been changed during reloading
 def resizeLatsLonsMatrix(latsMatrix, lonsMatrix, targetSize):
     result = [latsMatrix, lonsMatrix]
     for i in range(len(result)):
@@ -139,18 +119,27 @@ def resizeLatsLonsMatrix(latsMatrix, lonsMatrix, targetSize):
     return result
 
 
-# In[8]:
+###### Some important variables
 
+npixel = 128 # Define the pixel size of images
+pictureType = ["dnc", "dnm"]
+dataSets = ["2019-06","2019-07","2019-08","2019-09","2019-10"]
+
+#####
+
+
+#####################################
+# Start loading satellite images ####
+#####################################
+
+
+sat, labels = loadSatelliteImages(selectedDatasets=dataSets, pictureTypes=pictureType, pictureSize=(npixel, npixel))
 
 #The initial coordinate matrix is for images 650x650
 lats650 = np.load("./OstlandA/OstlandA-lats.npy")
 lons650 = np.load("./OstlandA/OstlandA-lons.npy")
 #Convert them to size (npixel x npixel)
 lats_npixel, lons_npixel = resizeLatsLonsMatrix(lats650, lons650, npixel)
-
-
-# In[9]:
-
 
 #Find the pixels where the weather stations are located
 weather_station_loc_pixels = dict()
@@ -159,42 +148,18 @@ for station in weather_station_coordinates.keys():
                           weather_station_coordinates[station][0], 
                           weather_station_coordinates[station][1])
 
-
-# In[10]:
-
-
-#Check that the locations are correct on one random image
-#fig, ax = plt.subplots(1)
-#ax.imshow(sat["2019-07"][pictureType[0]][1081])
-#for station in weather_station_loc_pixels.keys():
-#    ax.add_patch(Circle((weather_station_loc_pixels[station][0],weather_station_loc_pixels[station][1]), radius=5, color="red"))
-#ax.get_xaxis().set_visible(False)
-#ax.get_yaxis().set_visible(False)
-
-
-# In[11]:
-
-
-#fig.savefig("stations.png", dpi=300)
-
-
-# In[12]:
-
-
 # Normalize the of satellite images to the 0-1 range.
 for dataSet in sat.keys():
     for selectedPictureType in sat[dataSet].keys():
         sat[dataSet][selectedPictureType] = sat[dataSet][selectedPictureType]/255
 
 
-# ## Load solar intensity data from weather stations
-
-# In[13]:
-
+####################################################
+# Load solar intensity data from weather stations ##
+####################################################
 
 # Some weather stations have changed locations over time, as the differences between their locations are rather small (less than 8 km)
-# We at first do not make separation between them
-
+# We will not make a separation between their data
 def join_columns(c1, c2, nc, df, column_id): # Function for joining columns, where an area has two weather measuring points
     data = []
     cs = [c1, c2]
@@ -213,11 +178,7 @@ def join_columns(c1, c2, nc, df, column_id): # Function for joining columns, whe
     
     return df
 
-
-# In[14]:
-
-
-#Create datetime object from year, month and day
+# Function to datetime object column to dataframe from year, month and day
 def createDateTimeColumn(df):
     dateTimes = []
     for i in range(len(df)):
@@ -225,16 +186,8 @@ def createDateTimeColumn(df):
         dateTimes+=[datetime.combine(date(row.y, row.m, row.d), row.time)]
     df["dateTime"] = dateTimes
 
-
-# In[15]:
-
-
 #Load initial data
 hourly_sun_intensity = pd.read_excel('./data/2-10_21_524-2 Andmed.xlsx', sheet_name = 'tunni sum.kiirgus', header = 1)
-
-
-# In[16]:
-
 
 #Update column names by shortening them and converting to English
 newColumnNames = dict()
@@ -249,36 +202,21 @@ for columnName in hourly_sun_intensity.columns:
 hourly_sun_intensity = hourly_sun_intensity.rename(columns=newColumnNames)
 
 
-# In[17]:
-
-
 #Merge columns, which are due to weather station moving
 hourly_sun_intensity = join_columns('solar_Narva', 'solar_Narva-Jõesuu', 'solar_Narva', hourly_sun_intensity, 4)
 hourly_sun_intensity = join_columns('solar_Pärnu-Sauga', 'solar_Pärnu', 'solar_Pärnu', hourly_sun_intensity, 5)
-
-
-# In[18]:
-
 
 #Drop rows where some value is missing
 hourly_sun_intensity = hourly_sun_intensity.dropna()
 #If value is -1 it corresponds to night, set it to 0
 hourly_sun_intensity = hourly_sun_intensity.replace(-1, 0)
 
-
-# In[19]:
-
-
 #Create datetime object column for finding matching satellite images and rows of weather station data
 createDateTimeColumn(hourly_sun_intensity)
 
 
-# In[20]:
+# Function to datetime object column to dataframe from year, month and day
 
-
-#Shift the times -X minutes to facilitate predicting future solar intensity from existing
-from datetime import timedelta
-import copy
 def shiftDateTime(df, numberOfHours):
     dateTimes = []
     for i in range(len(df)):
@@ -292,32 +230,14 @@ def shiftDateTime(df, numberOfHours):
     
     return df2
     
-    
-
-
-# In[21]:
-
-
 ##Shift solar intensity time -1 h to allow predicting future
-
 hourly_sun_intensity_shifted = hourly_sun_intensity#shiftDateTime(hourly_sun_intensity, -1)
 
-
 # ### As satelite images are from 2019, we can drop other years
-
-# In[22]:
-
-
 hourly_sun_intensity_shifted = hourly_sun_intensity_shifted[hourly_sun_intensity_shifted.y == 2019]
 
 
 # ### Filter the data for matching
-
-# In[23]:
-
-
-#Mask for selecting right rows of weather data and drop others
-
 mask = np.asarray([hourly_sun_intensity_shifted["dateTime"].iloc[i] in labels[dataSets[0]][pictureType[0]] for i in range(len(hourly_sun_intensity_shifted["dateTime"]))])
 
 for j in range(1,len(dataSets)):
@@ -325,11 +245,9 @@ for j in range(1,len(dataSets)):
     mask = mask + mask_aux
 hourly_sun_intensity_filtered = hourly_sun_intensity_shifted[mask]
 
-
-# # Create dataset
-
-# In[24]:
-
+#################################################
+###### Create combined dataset for model ########
+#################################################
 
 """
 Function for creating samples out of satellite data. Each row of X contains given number 
@@ -370,46 +288,22 @@ def createDataSetFromImages(dataDict, imagetype, imageLabels, weatherDataLabels,
                 X_times.append(list(selected_X_times))
     return np.array(X), np.array(X_times)
 
-
-# In[25]:
-
-
 #Select only satellite images as prediction targets, where the last frame of RNN is in Weather data table
 labelsAsTImestamps = [pd.Timestamp(value) for value in hourly_sun_intensity_filtered.dateTime.values]
 X_dnc, X_times_dnc = createDataSetFromImages(sat, "dnc", labels, labelsAsTImestamps, imagesInSample=8, skipImages=4)
-
-
-# In[26]:
-
-
 X_dnm, X_times_dnm = createDataSetFromImages(sat, "dnm", labels, labelsAsTImestamps, imagesInSample=8, skipImages=4)
 
 
 # ### Link together points on satellite images and weather data
-
-# In[27]:
-
-
-
-##
 X_dnc_filtered = X_dnc
 X_dnm_filtered = X_dnm
 X_times_filtered = X_times_dnc
-
-
-# In[28]:
-
-
 X_filtered_images = dict()
 X_filtered_images["dnc"] = X_dnc_filtered
 X_filtered_images["dnm"] = X_dnm_filtered
 
 
 # ### Transforming points on images and sunlight data to dataset
-
-# In[29]:
-
-
 """
 Function for creating samples out of satellite data. Each row of X contains given number 
 (imagesInSample) used to predict future weather. Rows of y are sun intensities at selected location,
@@ -467,45 +361,18 @@ X_images_weather, y_intensity = createDataSetFromImagesToFeatures(X_filtered_ima
 
 for i in range(len(y_intensity)):
     if len(y_intensity[i])!=8:
-        print("Jama")
+        print("ERROR")
         print(i)
 
-
-# ## Train and predict solar intensity using feature from satellite image and weather data
-
-# In[ ]:
-
-
-from tensorflow import keras
-import tensorflow as tf
-
-
-# In[ ]:
-
-
-from sklearn.linear_model import LinearRegression, Lasso, Ridge
-from sklearn.svm import SVR
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn import linear_model
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import PolynomialFeatures
-import numpy as np
-from sklearn.metrics import r2_score
-from sklearn.metrics import mean_squared_error
-from sklearn.metrics import mean_absolute_error
-
-
-# In[ ]:
-
-
-from sklearn.model_selection import train_test_split
+###################################################################
+############# Predict with pretrained models #######################
+###################################################################
 X_train, X_test, y_train, y_test = train_test_split(X_images_weather, y_intensity, test_size=0.2, random_state=111)
 
 
-# In[ ]:
-
-
+###########################
+####### Model 1 ###########
+###########################
 
 model = keras.models.load_model('savedModel_LSTM_1')
 
@@ -528,9 +395,9 @@ print("Train:")
 print(mean_absolute_error(y_train[:,-1], y_train_predictions[:,-1]))
 
 
-# In[ ]:
-
-
+###########################
+####### Model 2 ###########
+###########################
 
 model = keras.models.load_model('savedModel_LSTM_2')
 
@@ -553,9 +420,9 @@ print("Train:")
 print(mean_absolute_error(y_train[:,-1], y_train_predictions[:,-1]))
 
 
-# In[ ]:
-
-
+###########################
+####### Model 3 ###########
+###########################
 
 model = keras.models.load_model('savedModel_LSTM_3')
 
@@ -576,46 +443,3 @@ print("Test:")
 print(mean_absolute_error(y_test[:,-1], y_test_predictions[:,-1]))
 print("Train:")
 print(mean_absolute_error(y_train[:,-1], y_train_predictions[:,-1]))
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
