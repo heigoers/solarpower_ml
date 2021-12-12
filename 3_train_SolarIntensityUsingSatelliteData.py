@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Notebook to correlate different channels in satellite images and measured sun intensity from weather stations
+# # Notebook to build models based on different channels in satellite images and measured sun intensity from weather stations
 
 # In[1]:
 
@@ -52,28 +52,20 @@ weather_station_coordinates["Vilsandi"] = [58.382778, 21.814167]
 
 # ## Load satellite images
 
-# In[3]:
+#
+#Function for loading the satellite images
+#Arguments:
+# selectedDataset - can be "2019-07" - e.g. specific month
+#                          "" - all months
+# pictureTypes - list defining what sort of constellations are loaded
+#                "dnc" - 
+#                "dnm" - 24-hour Microphysics RGB
 
-
-
-
-"""
-Function for loading the satellite images
-Arguments:
- selectedDataset - can be "2019-07" - e.g. specific month
-                          "" - all months
- pictureTypes - list defining what sort of constellations are loaded
-                "dnc" - 
-                "dnm" - 24-hour Microphysics RGB
-
- pictureSize - Size to resize images to after they are read from disk. Defaults to (256, 256).
-Returns:
-  2 dictionaries
-  dates - dates corresponding to pictures
-  pictures - satellite pictures
-"""
-
-
+# pictureSize - Size to resize images to after they are read from disk. Defaults to (256, 256).
+#Returns:
+#  2 dictionaries
+#  dates - dates corresponding to pictures
+#  pictures - satellite pictures
 def loadSatelliteImages(selectedDatasets=["2019-07"], pictureTypes=["dnc", "dnm"], pictureSize=(256, 256)):
     pictures = defaultdict(lambda: defaultdict(list))
     dates = defaultdict(lambda: defaultdict(list))
