@@ -20,6 +20,19 @@ from tensorflow import keras
 from PIL import Image
 #from matplotlib.patches import Circle
 from datetime import date
+from tensorflow import keras
+import tensorflow as tf
+from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.svm import SVR
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn import linear_model
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures
+import numpy as np
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
 
 
 # ## Locations of weather stations
@@ -90,7 +103,6 @@ def loadSatelliteImages(selectedDatasets=["2019-07"], pictureTypes=["dnc", "dnm"
     return pictures, dates
 
 
-# In[4]:
 
 
 ###### Some important variables
@@ -99,18 +111,12 @@ npixel = 128 # Define the pixel size of images
 pictureType = ["dnc", "dnm"]
 dataSets = ["2019-06","2019-07","2019-08","2019-09","2019-10"]
 
-
-# In[5]:
-
-
-sat, labels = loadSatelliteImages(selectedDatasets=dataSets, pictureTypes=pictureType, pictureSize=(npixel, npixel))
+#####################################
+# Start loading satellite images ####
+#####################################
 
 
-# ## Relate points in satellite image to weather station coordinates
-
-# In[6]:
-
-
+# Function to relate points in satellite image to weather station coordinates
 def findPixel(latsMatrix, lonsMatrix, coordLat, coordLon):
     #Iterate over lattitude and longitude matrix to find coord
     accuracyDif = 0.07
@@ -125,9 +131,7 @@ def findPixel(latsMatrix, lonsMatrix, coordLat, coordLon):
     return (None, None)
 
 
-# In[7]:
-
-
+# Function to resize the transformation matrix, if the size of picture has been changed during reloading
 def resizeLatsLonsMatrix(latsMatrix, lonsMatrix, targetSize):
     result = [latsMatrix, lonsMatrix]
     for i in range(len(result)):
@@ -138,8 +142,8 @@ def resizeLatsLonsMatrix(latsMatrix, lonsMatrix, targetSize):
     return result
 
 
-# In[8]:
-
+#Load sattelite images
+sat, labels = loadSatelliteImages(selectedDatasets=dataSets, pictureTypes=pictureType, pictureSize=(npixel, npixel))
 
 #The initial coordinate matrix is for images 650x650
 lats650 = np.load("./OstlandA/OstlandA-lats.npy")
@@ -159,34 +163,21 @@ for station in weather_station_coordinates.keys():
                           weather_station_coordinates[station][1])
 
 
-# In[11]:
-
-
-#Check that the locations are correct on one random image
-#fig, ax = plt.subplots(1)
-#ax.imshow(sat["2019-07"][pictureType[0]][450])
-#for station in weather_station_loc_pixels.keys():
-#    ax.add_patch(Circle((weather_station_loc_pixels[station][0],weather_station_loc_pixels[station][1]), radius=1.5, color="red"))
-
-
-# In[12]:
-
-
 # Normalize the of satellite images to the 0-1 range.
 for dataSet in sat.keys():
     for selectedPictureType in sat[dataSet].keys():
         sat[dataSet][selectedPictureType] = sat[dataSet][selectedPictureType]/255
 
-
-# ## Load solar intensity data from weather stations
-
-# In[13]:
+####################################################
+# Load solar intensity data from weather stations ##
+####################################################
 
 
 # Some weather stations have changed locations over time, as the differences between their locations are rather small (less than 8 km)
-# We at first do not make separation between them
+# We will not make a separation between their data
 
-def join_columns(c1, c2, nc, df, column_id): # Function for joining columns, where an area has two weather measuring points
+# Function for joining columns, where an area has two weather measuring points
+def join_columns(c1, c2, nc, df, column_id): 
     data = []
     cs = [c1, c2]
     for i, rows in df[cs].iterrows():
@@ -205,10 +196,7 @@ def join_columns(c1, c2, nc, df, column_id): # Function for joining columns, whe
     return df
 
 
-# In[14]:
-
-
-#Create datetime object from year, month and day
+# Function to datetime object column to dataframe from year, month and day
 def createDateTimeColumn(df):
     dateTimes = []
     for i in range(len(df)):
@@ -216,58 +204,7 @@ def createDateTimeColumn(df):
         dateTimes+=[datetime.combine(date(row.y, row.m, row.d), row.time)]
     df["dateTime"] = dateTimes
 
-
-# In[15]:
-
-
-#Load initial data
-hourly_sun_intensity = pd.read_excel('./data/2-10_21_524-2 Andmed.xlsx', sheet_name = 'tunni sum.kiirgus', header = 1)
-
-
-# In[16]:
-
-
-#Update column names by shortening them and converting to English
-newColumnNames = dict()
-newColumnNames["Aasta"] = "y"
-newColumnNames["Kuu"] = "m"
-newColumnNames["Päaev"] = "d"
-newColumnNames["Kell (UTC)"] = "time"
-
-for columnName in hourly_sun_intensity.columns:
-    if "kiirgus" in columnName:
-        newColumnNames[columnName] = "solar_"+columnName.replace(" summaarne kiirgus, W/m²", "")
-hourly_sun_intensity = hourly_sun_intensity.rename(columns=newColumnNames)
-
-
-# In[17]:
-
-
-#Merge columns, which are due to weather station moving
-hourly_sun_intensity = join_columns('solar_Narva', 'solar_Narva-Jõesuu', 'solar_Narva', hourly_sun_intensity, 4)
-hourly_sun_intensity = join_columns('solar_Pärnu-Sauga', 'solar_Pärnu', 'solar_Pärnu', hourly_sun_intensity, 5)
-
-
-# In[19]:
-
-
-#Drop rows where some value is missing
-hourly_sun_intensity = hourly_sun_intensity.dropna()
-#If value is -1 it corresponds to night, set it to 0
-hourly_sun_intensity = hourly_sun_intensity.replace(-1, 0)
-
-
-# In[20]:
-
-
-#Create datetime object column for finding matching satellite images and rows of weather station data
-createDateTimeColumn(hourly_sun_intensity)
-
-
-# In[21]:
-
-
-#Shift the times -X minutes to facilitate predicting future solar intensity from existing
+# Function to shift the times -X hours to facilitate predicting future solar intensity from existing
 from datetime import timedelta
 import copy
 def shiftDateTime(df, numberOfHours):
@@ -282,32 +219,45 @@ def shiftDateTime(df, numberOfHours):
     df2["time"] = [date.time() for date in dateTimes]
     
     return df2
-    
-    
+
+#Load initial data
+hourly_sun_intensity = pd.read_excel('./data/2-10_21_524-2 Andmed.xlsx', sheet_name = 'tunni sum.kiirgus', header = 1)
+
+#Update column names by shortening them and converting to English
+newColumnNames = dict()
+newColumnNames["Aasta"] = "y"
+newColumnNames["Kuu"] = "m"
+newColumnNames["Päaev"] = "d"
+newColumnNames["Kell (UTC)"] = "time"
+
+for columnName in hourly_sun_intensity.columns:
+    if "kiirgus" in columnName:
+        newColumnNames[columnName] = "solar_"+columnName.replace(" summaarne kiirgus, W/m²", "")
+hourly_sun_intensity = hourly_sun_intensity.rename(columns=newColumnNames)
 
 
-# In[22]:
+#Merge columns, which are due to weather station moving
+hourly_sun_intensity = join_columns('solar_Narva', 'solar_Narva-Jõesuu', 'solar_Narva', hourly_sun_intensity, 4)
+hourly_sun_intensity = join_columns('solar_Pärnu-Sauga', 'solar_Pärnu', 'solar_Pärnu', hourly_sun_intensity, 5)
 
+#Drop rows where some value is missing
+hourly_sun_intensity = hourly_sun_intensity.dropna()
+#If value is -1 it corresponds to night, set it to 0
+hourly_sun_intensity = hourly_sun_intensity.replace(-1, 0)
+
+#Create datetime object column for finding matching satellite images and rows of weather station data
+createDateTimeColumn(hourly_sun_intensity)
 
 ##Shift solar intensity time -1 h to allow predicting future
-
 hourly_sun_intensity_shifted = hourly_sun_intensity#shiftDateTime(hourly_sun_intensity, -1)
 
 
 # ### As satelite images are from 2019, we can drop other years
-
-# In[23]:
-
-
 hourly_sun_intensity_shifted = hourly_sun_intensity_shifted[hourly_sun_intensity_shifted.y == 2019]
 
 
 # ### Filter the data for matching
-
-# In[25]:
-
-
-#Mask for selecting right rows of weather data and drop others
+#Masks for selecting right rows of weather data and drop others
 
 mask = np.asarray([hourly_sun_intensity_shifted["dateTime"].iloc[i] in labels[dataSets[0]][pictureType[0]] for i in range(len(hourly_sun_intensity_shifted["dateTime"]))])
 
@@ -316,25 +266,13 @@ for j in range(1,len(dataSets)):
     mask = mask + mask_aux
 hourly_sun_intensity_filtered = hourly_sun_intensity_shifted[mask]
 
-
-# # Create dataset
-
-# In[26]:
-
-
-"""
-Function for creating samples out of satellite data. Each row of X contains given number 
-(imagesInSample) used to predict future weather. Rows of y are similar to y, although shifted
-by one time interval
-
-Arguments
-dataDict - dictionary, which contains image data
-X_imagetype - the type of images that are requested for X
-Y_imagetype - the type of images that are requested for y
-imageLabels - timestamps of images
-weatherDataLabels - timestamps of weather data
-imagesInSample - number of images in data row
-"""
+#################################################
+###### Create combined dataset for model ########
+#################################################
+#
+#Function for creating samples out of satellite data. Each row of X contains given number 
+#(imagesInSample) used to predict future weather. Rows of y are similar to y, although shifted
+#by one time interval
 def createDataSetFromImages(dataDict, imagetype, imageLabels, weatherDataLabels, selectChannelX=None, imagesInSample=6, skipImages=1):
     X = []
     X_times = []
@@ -362,35 +300,16 @@ def createDataSetFromImages(dataDict, imagetype, imageLabels, weatherDataLabels,
     return np.array(X), np.array(X_times)
 
 
-# In[27]:
-
-
 #Select only satellite images as prediction targets, where the last frame of RNN is in Weather data table
 labelsAsTImestamps = [pd.Timestamp(value) for value in hourly_sun_intensity_filtered.dateTime.values]
 X_dnc, X_times_dnc = createDataSetFromImages(sat, "dnc", labels, labelsAsTImestamps, imagesInSample=8, skipImages=4)
-
-
-# In[28]:
-
-
 X_dnm, X_times_dnm = createDataSetFromImages(sat, "dnm", labels, labelsAsTImestamps, imagesInSample=8, skipImages=4)
 
 
 # ### Link together points on satellite images and weather data
-
-# In[30]:
-
-
-
-##
 X_dnc_filtered = X_dnc
 X_dnm_filtered = X_dnm
 X_times_filtered = X_times_dnc
-
-
-# In[35]:
-
-
 X_filtered_images = dict()
 X_filtered_images["dnc"] = X_dnc_filtered
 X_filtered_images["dnm"] = X_dnm_filtered
@@ -398,18 +317,10 @@ X_filtered_images["dnm"] = X_dnm_filtered
 
 # ### Transforming points on images and sunlight data to dataset
 
-# In[114]:
-
-
-"""
-Function for creating samples out of satellite data. Each row of X contains given number 
-(imagesInSample) used to predict future weather. Rows of y are sun intensities at selected location,
-although shifted
-by one time interval
-
-Arguments
-
-"""
+#Function for creating samples out of satellite data. Each row of X contains given number 
+#(imagesInSample) used to predict future weather. Rows of y are sun intensities at selected location,
+#although shifted
+#by one time interval
 def createDataSetFromImagesToFeatures(satelliteData, satelliteTimes, intensityData, 
                                        weatherStationPixels, howMuchToPredictAhead=1):
     X = []
@@ -439,14 +350,8 @@ def createDataSetFromImagesToFeatures(satelliteData, satelliteTimes, intensityDa
             if(len(y_subset)==len(X_subset)):
                 y+=[np.array(y_subset)]
                 X+=[X_subset]
-        
-
-
-            
+       
     return np.array(X), np.array(y)
-
-
-# In[115]:
 
 
 X_images_weather, y_intensity = createDataSetFromImagesToFeatures(X_filtered_images, X_times_filtered,
@@ -455,57 +360,33 @@ X_images_weather, y_intensity = createDataSetFromImagesToFeatures(X_filtered_ima
 
 # In[116]:
 
-
+#Check if we have right number of y values in sample
 for i in range(len(y_intensity)):
     if len(y_intensity[i])!=8:
-        print("Jama")
+        print("ERROR!")
         print(i)
 
+##################################################
+############# Train models #######################
+##################################################
 
 # ## Train and predict solar intensity using feature from satellite image and weather data
-
-# In[91]:
-
-
-from tensorflow import keras
-import tensorflow as tf
-
-
-# In[92]:
-
-
-from sklearn.linear_model import LinearRegression, Lasso, Ridge
-from sklearn.svm import SVR
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn import linear_model
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import PolynomialFeatures
-import numpy as np
-from sklearn.metrics import r2_score
-from sklearn.metrics import mean_squared_error
-
-
-# In[120]:
-
-
-from sklearn.model_selection import train_test_split
+#Spli data into test and train sets
 X_train, X_test, y_train, y_test = train_test_split(X_images_weather, y_intensity, test_size=0.2, random_state=111)
 
-
-# In[127]:
-
-
-
+#### Train different models.
+# To learn how to preform training of such models as RNN networks containing time series we used
 #https://www.tensorflow.org/tutorials/structured_data/time_series
+# as reference
+
+
+########### Model 1
 model = keras.models.Sequential([
-    # Shape [batch, time, features] => [batch, time, lstm_units]
     keras.layers.LSTM(64,activation = "tanh",
                       return_sequences=True),
     keras.layers.BatchNormalization(),
     keras.layers.LSTM(32,activation = "tanh",
                   return_sequences=True),
-    # Shape => [batch, time, features]
     keras.layers.Dense(units=1)
 ])
 
@@ -526,24 +407,14 @@ model.fit(X_train, y_train, validation_data=(X_test,y_test), epochs=2000, callba
 model.save('savedModel_LSTM_1')
 
 
-# In[130]:
-
-
-
-#https://www.tensorflow.org/tutorials/structured_data/time_series
+########### Model 2
 model = keras.models.Sequential([
-    # Shape [batch, time, features] => [batch, time, lstm_units]
-
-#    keras.layers.LSTM(48, activation = "tanh", dropout=0.25,
-#                      return_sequences=True),
-
     keras.layers.LSTM(64,activation = "tanh",
                       return_sequences=True),
     keras.layers.Dense(units=32),
     keras.layers.BatchNormalization(),
     keras.layers.LSTM(32,activation = "tanh",
                   return_sequences=True),
-    # Shape => [batch, time, features]
     keras.layers.Dense(units=1)
 ])
 
@@ -564,28 +435,15 @@ model.fit(X_train, y_train, validation_data=(X_test,y_test), epochs=2000, callba
 model.save('savedModel_LSTM_2')
 
 
-# In[126]:
-
-
-
-#https://www.tensorflow.org/tutorials/structured_data/time_series
+########### Model 3
 
 model = keras.models.Sequential([
-    # Shape [batch, time, features] => [batch, time, lstm_units]
-
-#    keras.layers.LSTM(48, activation = "tanh", dropout=0.25,
-#                      return_sequences=True),
-
     keras.layers.LSTM(64,activation = "relu",
                       return_sequences=True),
     keras.layers.LSTM(32,activation = "relu",
                   return_sequences=True),
-    # Shape => [batch, time, features]
     keras.layers.Dense(units=1)
 ])
-
-
-
 
 early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss',
                                                 patience=50,
@@ -596,22 +454,12 @@ model.compile(loss=tf.losses.MeanSquaredError(),
             metrics=[tf.metrics.MeanAbsoluteError()])
 
 model.fit(X_train, y_train, validation_data=(X_test,y_test), epochs=2000, callbacks=[early_stopping])
-
-
-# In[ ]:
-
-
 model.save('savedModel_LSTM_3')
 
 
-# In[125]:
-
-
-
-#https://www.tensorflow.org/tutorials/structured_data/time_series
+########### Model 4
 
 model = keras.models.Sequential([
-    # Shape [batch, time, features] => [batch, time, lstm_units]
     keras.layers.LSTM(64,activation = "relu",
                       return_sequences=True),
     keras.layers.LSTM(64,activation = "relu",
@@ -619,9 +467,6 @@ model = keras.models.Sequential([
     keras.layers.Dense(units=1)
 ])
 
-
-
-
 early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss',
                                                 patience=50,
                                                 mode='min')
@@ -631,30 +476,17 @@ model.compile(loss=tf.losses.MeanSquaredError(),
             metrics=[tf.metrics.MeanAbsoluteError()])
 
 model.fit(X_train, y_train, validation_data=(X_test,y_test), epochs=2000, callbacks=[early_stopping])
-
-
-# In[ ]:
-
-
 model.save('savedModel_LSTM_4')
 
 
-# In[ ]:
-
-
-
-#https://www.tensorflow.org/tutorials/structured_data/time_series
+########### Model 5
 
 model = keras.models.Sequential([
-    # Shape [batch, time, features] => [batch, time, lstm_units]
     keras.layers.LSTM(64,activation = "relu",
                       return_sequences=True),
     keras.layers.Dense(units=1)
 ])
 
-
-
-
 early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss',
                                                 patience=50,
                                                 mode='min')
@@ -664,17 +496,13 @@ model.compile(loss=tf.losses.MeanSquaredError(),
             metrics=[tf.metrics.MeanAbsoluteError()])
 
 model.fit(X_train, y_train, validation_data=(X_test,y_test), epochs=2000, callbacks=[early_stopping])
-
-
-# In[ ]:
-
-
 model.save('savedModel_LSTM_5')
 
 
-#https://www.tensorflow.org/tutorials/structured_data/time_series
+
+########### Model 6
+
 model = keras.models.Sequential([
-    # Shape [batch, time, features] => [batch, time, lstm_units]
     keras.layers.LSTM(64,activation = "tanh",
                       return_sequences=True),
     keras.layers.BatchNormalization(),
@@ -683,7 +511,6 @@ model = keras.models.Sequential([
     keras.layers.BatchNormalization(),
     keras.layers.LSTM(32,activation = "tanh",
                   return_sequences=True),
-    # Shape => [batch, time, features]
     keras.layers.Dense(units=1)
 ])
 
@@ -696,9 +523,4 @@ model.compile(loss=tf.losses.MeanSquaredError(),
             metrics=[tf.metrics.MeanAbsoluteError(), tf.keras.metrics.RootMeanSquaredError()])
 
 model.fit(X_train, y_train, validation_data=(X_test,y_test), epochs=2000, callbacks=[early_stopping])
-
-
-# In[ ]:
-
-
 model.save('savedModel_LSTM_6')
