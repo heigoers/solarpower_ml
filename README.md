@@ -1,4 +1,4 @@
-# solarpower_ml
+# Smart solar power  (solarpower_ml)
 
 This repository contains a source code and results of the group project done during the course Machine Learning (MTAT.03.227).
 
